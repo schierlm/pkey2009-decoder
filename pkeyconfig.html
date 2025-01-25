@@ -1,0 +1,219 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<title>PKeyConfig Decoder</title>
+<link rel="shortcut icon" href="favicon.ico">
+<style type="text/css">
+body { font-family: Verdana, Arial, Helvetica, sans-serif; }
+textarea { width: 100%; height: 50vh; }
+</style>
+<script src="pkeys.js"></script>
+<script type="text/javascript">
+"use strict";
+
+window.onerror = function(message) {
+	document.getElementById("messages").value = message;
+};
+
+window.onload = function() {
+	document.getElementById("pkey").onchange = loadfiles;
+}
+
+function loadfiles(evt) {
+	const log = document.getElementById("messages");
+	log.value = "Loading...";
+	Promise.all([...evt.target.files].map(f => f.text())).then(strs => {
+		evt.target.value = null;
+		const parser = new DOMParser();
+		let globalGroups = [];
+		for(const str of strs) {
+			const doc1 = parser.parseFromString(str, 'text/xml');
+			const base64 = doc1.evaluate('/rg:licenseGroup/r:license/r:otherInfo/tm:infoTables/tm:infoList/tm:infoBin[@name="pkeyConfigData"]/text()',
+				doc1, doc1.documentElement.firstChild, XPathResult.STRING_TYPE).stringValue;
+			const doc2 = parser.parseFromString(atob(base64), 'text/xml');
+			let groups = {}, seenGroups = {}, uuidMap = {};
+			const ns = 'http://www.microsoft.com/DRM/PKEY/Configuration/2.0';
+			for(let key of doc2.getElementsByTagNameNS(ns, "PublicKey")) {
+				let group = key.getElementsByTagNameNS(ns, "GroupId")[0].textContent;
+				let algorithm = key.getElementsByTagNameNS(ns, "AlgorithmId")[0].textContent;
+				seenGroups[group] = true;
+				if (algorithm != 'msft:rm/algorithm/pkey/2009') {
+					log.value += "\nSkipping group "+ group +": unsupported algorithm " + algorithm;
+				} else if ( key.getElementsByTagNameNS(ns, "PublicKeyValue")[0].textContent != btoa('msft:pkey/2009/cryptoprofile/hmac/sha256')) {
+					log.value += "\nSkipping group "+ group +": unsupported public key value";
+				} else {
+					groups[group] = [];
+				}
+			}
+			for(let cfg of doc2.getElementsByTagNameNS(ns, "Configuration")) {
+				const uuid = cfg.getElementsByTagNameNS(ns, "ActConfigId")[0].textContent;
+				const group = cfg.getElementsByTagNameNS(ns, "RefGroupId")[0].textContent;
+				const editions = cfg.getElementsByTagNameNS(ns, "EditionId")[0].textContent;
+				let description = cfg.getElementsByTagNameNS(ns, "ProductDescription")[0].textContent;
+				const type = cfg.getElementsByTagNameNS(ns, "ProductKeyType")[0].textContent;
+				const rand = cfg.getElementsByTagNameNS(ns, "IsRandomized")[0].textContent;
+				if (/^Office1[56]_.*(O365|PipcR|MondoR|(PIN$))/.test(description))
+					description = "Office15+16" + description.substring(8);
+				if (rand != "false") throw "Randomized group not supported: "+group;
+				if (seenGroups[group] === undefined) {
+					log.value += "\nSkipping group "+ group +": missing key algorithm";
+				} else if (groups[group] !== undefined) {
+					groups[group] = [description, editions, type];
+					uuidMap[uuid] = group;
+				}
+			}
+			for(let rng of doc2.getElementsByTagNameNS(ns, "KeyRange")) {
+				const uuid = rng.getElementsByTagNameNS(ns, "RefActConfigId")[0].textContent;
+				const part = rng.getElementsByTagNameNS(ns, "PartNumber")[0].textContent;
+				const eula = rng.getElementsByTagNameNS(ns, "EulaType")[0].textContent;
+				const valid = rng.getElementsByTagNameNS(ns, "IsValid")[0].textContent;
+				const start = rng.getElementsByTagNameNS(ns, "Start")[0].textContent;
+				const end = rng.getElementsByTagNameNS(ns, "End")[0].textContent;
+				let group = uuidMap[uuid];
+				if (group === undefined) {
+					log.value += "\nSkipping key range for "+ uuid +": missing group";
+					continue;
+				}
+				if (valid != "true") {
+					throw "Invalid group not supported: " + group;
+				}
+				let diffeula = "";
+				if (groups[group].length == 3) {
+					groups[group].push(eula);
+				} else if (groups[group][3] != eula) {
+					diffeula = eula;
+				}
+				if (eula.indexOf("-") != -1) {
+					throw("EULA value with dashes not supported: " + eula);
+				}
+				groups[group].push(start+"-"+end+"-"+diffeula+"-"+part);
+			}
+			globalGroups.push(groups);
+		}
+		const newgroup = document.getElementById("newgroup").checked;
+		const samegroup = document.getElementById("samegroup").checked;
+		const subsgroup = document.getElementById("subsgroup").checked;
+		const mergegroup = document.getElementById("mergegroup").checked;
+		const diffgroup = document.getElementById("diffgroup").checked;
+		const basecomment = document.getElementById("basecomment").checked;
+		const out = document.getElementById("output");
+		out.value="{";
+		let mergeCounts = {};
+		for(let groups of globalGroups) {
+			for(let g in groups) {
+				let show = false, gl = g;
+				if (KNOWN_PKEY_GROUPS[g] === undefined) {
+					show = newgroup;
+				} else if (JSON.stringify(KNOWN_PKEY_GROUPS[g]) == JSON.stringify(groups[g])) {
+					show = samegroup;
+				} else {
+					const mergemode = calcMergeMode(KNOWN_PKEY_GROUPS[g],groups[g]);
+					if (mergemode == 'mergeable') {
+						show = mergegroup;
+						if (basecomment && show) {
+							mergeCounts[g] = (mergeCounts[g] || 0) + 1;
+							gl = "m" + g + "_" + mergeCounts[g];
+						}
+					} else if (mergemode == 'subset') {
+						show = subsgroup;
+					} else {
+						show = diffgroup;
+					}
+				}
+				if (show) {
+					if (basecomment && KNOWN_PKEY_GROUPS[g] !== undefined) {
+						out.value+="\n//\t"+g+": "+JSON.stringify(KNOWN_PKEY_GROUPS[g])+",";
+					}
+					out.value+="\n\t"+gl+": "+JSON.stringify(groups[g])+",";
+				}
+			}
+		}
+		out.value +="\n}";
+		log.value+="\nDone.";
+	}).then(undefined, window.onerror);
+}
+
+function calcMergeMode(origGroup, newGroup) {
+	if (origGroup.length < 5 || newGroup.length < 5)
+		return 'incompatible';
+	for (let i=0; i<4; i++) {
+		if (origGroup[i] != newGroup[i])
+			return 'incompatible';
+	}
+	let origRanges = {}, subset = true;
+	for(let i=4; i<origGroup.length; i++) {
+		origRanges[origGroup[i].split("-")[0]] = origGroup[i];
+	}
+	for(let i = 4; i < newGroup.length; i++) {
+		const origRange = origRanges[newGroup[i].split("-")[0]];
+		if (origRange === undefined) {
+			subset = false;
+		} else if (origRange != newGroup[i]) {
+			return 'incompatible';
+		}
+	}
+	return subset ? 'subset' : 'mergeable';
+}
+
+function minilist() {
+	const log = document.getElementById("messages");
+	log.value = "Building...";
+	const out = document.getElementById("output");
+	out.value="{";
+	for(let g in KNOWN_PKEY_GROUPS) {
+		out.value+="\n\t"+g+": "+JSON.stringify(KNOWN_PKEY_GROUPS[g][0])+",";
+	}
+	out.value +="\n}";
+	log.value+="\nDone.";
+}
+
+function mergelist() {
+	const log = document.getElementById("messages");
+	log.value = "Merging...";
+	const out = document.getElementById("output");
+	out.value="{";
+	for(let mg in KNOWN_PKEY_GROUPS) {
+		let m = mg.match("m([0-9]+)_[0-9]+");
+		if (m) {
+			let g = m[1];
+			let orig = KNOWN_PKEY_GROUPS[g];
+			let add = KNOWN_PKEY_GROUPS[mg];
+			if (calcMergeMode(orig, add) == 'mergeable') {
+				let ranges = {};
+				for(let i=4; i<orig.length; i++) {
+					ranges[orig[i].split("-")[0]] = orig[i];
+				}
+				for(let i=4; i<add.length; i++) {
+					ranges[add[i].split("-")[0]] = add[i];
+				}
+
+				KNOWN_PKEY_GROUPS[g] = orig.slice(0, 4);
+				for (let k in ranges) {
+					KNOWN_PKEY_GROUPS[g].push(ranges[k]);
+				}
+				if (calcMergeMode(KNOWN_PKEY_GROUPS[g], orig) != 'subset' || calcMergeMode(KNOWN_PKEY_GROUPS[g], add) != 'subset') {
+					throw "Merge error";
+				}
+				out.value+="\n\t"+g+": "+JSON.stringify(KNOWN_PKEY_GROUPS[g])+",";
+			}
+		}
+	}
+	out.value += "\n}";
+	log.value += "\nDone.";
+}
+
+</script>
+</head>
+<body>
+<h1>PKeyConfig Decoder</h1>
+<p>Select one or more <tt>pkeyconfig*.xrm-ms</tt> files to compare contained groups to list of known groups. These files are typically found in
+<tt>C:\Windows\System32\spp\tokens\pkeyconfig</tt>.</p>
+<p><input id="pkey" type="file" accept=".xrm-ms" multiple></p>
+<p>Show groups: <label><input type="checkbox" id="newgroup" checked> New</label> | <label><input type="checkbox" id="samegroup" checked> Same</label> |
+<label><input type="checkbox" id="subsgroup" checked> Subset</label> | <label><input type="checkbox" id="mergegroup" checked> Mergeable</label> |
+<label><input type="checkbox" id="diffgroup" checked> Different (incompatible)</label></p>
+<p><label><input type="checkbox" id="basecomment"> Include base/reference groups as comment</label></p>
+<textarea id="messages" style="height: 10vh"></textarea>
+<textarea id="output"></textarea>
+</body>
+</html>

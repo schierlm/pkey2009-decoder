@@ -1,0 +1,145 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Advanced PKEY2009 Product Key Encoder/Decoder</title>
+<link rel="shortcut icon" href="favicon.ico">
+<style type="text/css">
+body { font-family: Verdana, Arial, Helvetica, sans-serif; }
+table { border: none; }
+th { text-align: left; }
+#key { font-size: 200%; width: 20em; font-family: monospace; }
+#result { color: red;}
+</style>
+<script src="utils.js"></script>
+<script src="pkeys.js"></script>
+<script type="text/javascript">
+"use strict";
+
+window.onerror = function(message) {
+	document.getElementById("result").innerText = message;
+};
+
+window.onload = function() {
+	document.getElementById("key").oninput = function(evt) {
+		keyInput(evt.target);
+		keyChanged();
+	};
+	document.getElementById("key").onchange = keyChanged;
+	const sGroup = document.getElementById("sGroup");
+	const cChecksum = document.getElementById("cChecksum");
+	for(let g in KNOWN_PKEY_GROUPS) {
+		const opt = document.createElement("option");
+		opt.value = g;
+		opt.appendChild(document.createTextNode(KNOWN_PKEY_GROUPS[g][0]));
+		sGroup.appendChild(opt);
+	}
+	sGroup.onchange = function() {
+		document.getElementById("tGroup").value = sGroup.value;
+		fieldsChanged();
+	};
+	cChecksum.onchange = function() {
+		if (cChecksum.checked) {
+			document.getElementById("tChecksum").value = cChecksum.dataset.checksum;
+			fieldsChanged();
+		}
+	};
+	document.getElementById("cUpgrade").onchange = fieldsChanged;
+	document.getElementById("cExtra").onchange = fieldsChanged;
+	document.getElementById("tGroup").onchange = fieldsChanged;
+	document.getElementById("tSerial").onchange = fieldsChanged;
+	document.getElementById("tSecurity").onchange = fieldsChanged;
+	document.getElementById("tChecksum").onchange = fieldsChanged;
+	document.getElementById("tGroup").oninput = fieldsChanged;
+	document.getElementById("tSerial").oninput = fieldsChanged;
+	document.getElementById("tSecurity").oninput = fieldsChanged;
+	document.getElementById("tChecksum").oninput = fieldsChanged;
+	detailsChanged();
+};
+
+function keyChanged() {
+	const result = document.getElementById("result");
+	const decoded = decodeKey(document.getElementById("key").value);
+	if (typeof decoded == 'string') {
+		result.innerText = decoded;
+	} else {
+		let [group, serial, security, checksum, upgrade, extra] = decoded;
+		document.getElementById("tGroup").value = group;
+		document.getElementById("tSerial").value = serial;
+		document.getElementById("tSecurity").value = security;
+		document.getElementById("tChecksum").value = checksum;
+		document.getElementById("cUpgrade").checked = upgrade;
+		document.getElementById("cExtra").checked = extra;
+		detailsChanged();
+	}
+}
+
+function fieldsChanged() {
+	let group = +document.getElementById("tGroup").value;
+	let serial = +document.getElementById("tSerial").value;
+	let security = +document.getElementById("tSecurity").value;
+	let checksum = +document.getElementById("tChecksum").value;
+	let upgrade = document.getElementById("cUpgrade").checked;
+	let extra = document.getElementById("cExtra").checked;
+	document.getElementById("key").value = encodeKey(BigInt(group), BigInt(serial), BigInt(security), BigInt(checksum), upgrade, extra);
+	detailsChanged();
+}
+
+function detailsChanged() {
+	let group = +document.getElementById("tGroup").value;
+	let serial = +document.getElementById("tSerial").value;
+	let security = +document.getElementById("tSecurity").value;
+	let checksum = +document.getElementById("tChecksum").value;
+	let upgrade = document.getElementById("cUpgrade").checked;
+	let extra = document.getElementById("cExtra").checked;
+	let serialInfo = "[Unknown]";
+	let groupData = KNOWN_PKEY_GROUPS[group];
+	if (groupData !== undefined) {
+		for(let i = 4; i < groupData.length; i++) {
+			const [min, max, eula, ...desc] = groupData[i].split("-");
+			if (serial >= +min && serial <= +max) {
+				serialInfo = min+"-"+max+": <b>Part Number</b> " +desc.join("-")+", <b>EULA</b> "+(eula == '' ? groupData[3] : eula);
+				break;
+			}
+		}
+	}
+	document.getElementById("sGroup").value = groupData === undefined ? 0 : group;
+	document.getElementById("iSerial").innerHTML = serialInfo;
+	let cChecksum = calcChecksum(BigInt(group), BigInt(serial), BigInt(security), upgrade, extra);
+	document.getElementById("cChecksum").checked = (cChecksum == checksum);
+	document.getElementById("cChecksum").dataset.checksum = cChecksum;
+	document.getElementById("iChecksum").innerText = (cChecksum == checksum) ? "Correct" : "Should be "+cChecksum;
+	document.getElementById("result").innerText = "";
+}
+
+function encodeKey(group, serial, security, checksum, upgrade, extra) {
+	let keyBits = encodeBits(group, serial, security, checksum, upgrade, extra);
+	let result = '';
+	for(let i=0; i<24; i++) {
+		result = ALPHABET[Number(keyBits % 24n)] + result;
+		keyBits /= 24n;
+	}
+	keyBits = Number(keyBits);
+	if (keyBits > 24) return "[Unencodable]";
+	result = result.substring(0, keyBits)+ 'N' + result.substring(keyBits);
+	for(let i = 5; i < result.length; i+= 6) {
+		result = result.substring(0, i) + "-" + result.substring(i);
+	}
+	return result;
+}
+</script>
+</head>
+<body>
+<h1>Advanced PKEY2009 Product Key Encoder/Decoder</h1>
+<h2>Enter product key</h2>
+<p><input id="key" type="text" maxlength="29" placeholder="XXXXX-XXXXX-XXNXX-XXXXX-XXXXX"></p>
+<p id="result"></p>
+<h2>Details</h2>
+<table>
+<tr><th>Group:  </th><td><input type="text" id="tGroup" value="0">   </td><td><select id="sGroup"><option value="0">[Unknown]</option></select></td></tr>
+<p><th>Serial:  </th><td><input type="text" id="tSerial" value="0">  </td><td><span id="iSerial">[Unknown]</span></td></tr>
+<p><th>Security:</th><td><input type="text" id="tSecurity" value="0"></td><td><i>(cannot be checked)</i></td></tr>
+<p><th>Checksum:</th><td><input type="text" id="tChecksum" value="0"></td><td><label><input type="checkbox" id="cChecksum"> <span id="iChecksum">Correct</i></label></td></tr>
+<p><th>Flags:   </th><td colspan="2"><label><input type="checkbox" id="cUpgrade"> Upgrade</label> | <label><input type="checkbox" id="cExtra"> Extra</label></td></tr>
+</table>
+</body>
+</html>

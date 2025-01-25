@@ -1,0 +1,65 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<title>PKEY2009 Product Key Decoder</title>
+<link rel="shortcut icon" href="favicon.ico">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.0/gh-fork-ribbon.min.css" />
+<style type="text/css">
+body { font-family: Verdana, Arial, Helvetica, sans-serif; }
+#key { font-size: 200%; width: 20em; font-family: monospace; }
+#result { color: #080;}
+</style>
+<script src="utils.js"></script>
+<script src="pkeys-mini.js"></script>
+<script type="text/javascript">
+"use strict";
+
+window.onerror = function(message) {
+	document.getElementById("result").innerText = message;
+};
+
+window.onload = function() {
+	document.getElementById("key").oninput = function(evt) {
+		keyInput(evt.target);
+		keyChanged();
+	};
+	document.getElementById("key").onchange = keyChanged;
+};
+
+function keyChanged() {
+	const result = document.getElementById("result");
+	const decoded = decodeKey(document.getElementById("key").value);
+	if (typeof decoded == 'string') {
+		result.innerText = decoded;
+	} else {
+		let [group, serial, security, checksum, upgrade, extra] = decoded;
+		let cChecksum = calcChecksum(group, serial, security, upgrade, extra);
+		result.innerHTML = '<h4>'+ (checksum == cChecksum ? '' : '[CHECKSUM MISMATCH] ') +
+			(KNOWN_PKEY_GROUPS_MINI[group] || 'Unknown [group ' + group +']')+'</h4>'+
+			'<b>Group:</b> ' + group+
+			', <b>Serial:</b> ' + serial+
+			', <b>Security:</b> ' + security +
+			', <b>Checksum:</b> ' + checksum + (checksum == cChecksum ? " (correct)" : " (should be "+cChecksum+")")+
+			', <b>Flags:</b> ' + (upgrade ? "Upgrade" : extra ? "" : "None") + (extra ? " Extra" : "");
+	}
+}
+
+</script>
+</head>
+<body>
+<a class="github-fork-ribbon" href="https://github.com/schierlm/pkey2009-decoder" title="Fork me on GitHub">Fork me on GitHub</a>
+<h1>PKEY2009 Product Key Decoder</h1>
+<center>
+<h2>Enter product key</h2>
+<p><input id="key" type="text" maxlength="29" placeholder="XXXXX-XXXXX-XXNXX-XXXXX-XXXXX"></p>
+<p id="result"></p>
+<p><a href="advanced.html">Advanced options</a> &ndash; <a href="pkeyconfig.html">PKeyConfig Decoder</a> &ndash;
+Based on <a href="https://github.com/awuctl/licensing-stuff/tree/main">keycutter</a></p>
+</center>
+<p><b>Notes:</b></p>
+<ul><li><i>This only checks the structure of the key, not its validity. So this tool will only tell you which kind of product the key can activate,
+<b>if</b> it is valid.</i></li>
+<li><i>All validation is done locally inside your browser.</i></li>
+<li><i>Only <tt>pkey2009</tt> style keys (25 characters in groups of 5, exactly one <tt>N</tt>) are supported, as used by Windows 8 or higher.</i></li></ul>
+</body>
+</html>
